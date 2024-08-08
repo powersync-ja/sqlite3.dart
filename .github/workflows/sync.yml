@@ -37,15 +37,18 @@ jobs:
         run: |
           git remote add upstream https://github.com/simolus3/sqlite3.dart.git
           git fetch upstream
+          lines=$( git diff main..upstream/main -- . ':(exclude).github/**' | wc -l )
+          echo "Number of detected line changes: $lines"
+          if [ $lines -eq 0 ]; then
+            echo "No changes detected, Cancelling workflow..."
+            gh run cancel ${{ github.run_id }}
+            gh run watch ${{ github.run_id }}
+          fi
       - name: Merge upstream changes
         run: |
           git checkout -b chore/update-sqlite3-upstream main
           git push --set-upstream origin chore/update-sqlite3-upstream
-          lines=$( git diff main..upstream/main -- . ':(exclude).github/**' | wc -l )
-          echo "Number of detected line changes: $lines"
-          if [ $lines -gt 0 ]; then
-            git merge upstream/main
-            git merge --no-edit upstream/main
-            git push origin chore/update-sqlite3-upstream
-            gh pr create --title "chore: update sqlite3 upstream" --body "This PR updates the main branch to the latest changes from the upstream repository." --base main --head chore/update-sqlite3-upstream
-          fi
+          git merge upstream/main
+          git merge --no-edit upstream/main
+          git push origin chore/update-sqlite3-upstream
+          gh pr create --title "chore: update sqlite3 upstream" --body "This PR updates the main branch to the latest changes from the upstream repository." --base main --head chore/update-sqlite3-upstream
