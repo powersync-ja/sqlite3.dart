@@ -8,7 +8,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
-import 'package:sqlite3/src/wasm/vfs/growing_buffer.dart';
+import 'package:sqlite3/src/wasm/vfs/dynamic_buffer.dart';
 import 'package:web/web.dart' as web;
 
 import '../../constants.dart';
@@ -534,7 +534,7 @@ final class IndexedDbFileSystem extends BaseVirtualFileSystem {
       final name = entry.key;
       final fileId = entry.value;
 
-      final buffer = GrowingByteBuffer();
+      final buffer = DynamicBuffer();
       final data = await _asynchronous.readFully(fileId);
       buffer.add(data);
 
@@ -647,7 +647,7 @@ class _IndexedDbFile implements VirtualFileSystemFile {
   void xWrite(Uint8List buffer, int fileOffset) {
     vfs._checkClosed();
 
-    final previousContent = vfs._memory.fileData[path] ?? GrowingByteBuffer();
+    final previousContent = vfs._memory.fileData[path] ?? DynamicBuffer();
     memoryFile.xWrite(buffer, fileOffset);
 
     if (!vfs._inMemoryOnlyFiles.contains(path)) {

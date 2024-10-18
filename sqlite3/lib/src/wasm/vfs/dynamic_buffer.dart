@@ -2,16 +2,20 @@ import 'dart:typed_data';
 
 /// A utility class that manages a growing byte buffer.
 /// It dynamically increases its capacity in factors of 2 when needed.
-class GrowingByteBuffer {
+class DynamicBuffer {
   Uint8List _buffer;
   int _capacity;
   int _length = 0;
 
-  /// Creates a [GrowingByteBuffer] with an optional initial capacity.
+  /// Creates a [DynamicBuffer] with an optional initial capacity.
   /// The default initial capacity is 1024 bytes.
-  GrowingByteBuffer([int initialCapacity = 1024])
+  DynamicBuffer([int initialCapacity = 1024])
       : _capacity = initialCapacity,
-        _buffer = Uint8List(initialCapacity);
+        _buffer = Uint8List(initialCapacity) {
+    if (initialCapacity < 1) {
+      throw ArgumentError("initialCapacity must be positive");
+    }
+  }
 
   /// Adds [data] to the buffer, expanding its capacity if necessary.
   void add(Uint8List data) {
@@ -26,7 +30,7 @@ class GrowingByteBuffer {
     if (offset < 0) {
       throw ArgumentError("Offset must be non-negative");
     }
-    int endPosition = offset + data.length;
+    final endPosition = offset + data.length;
     _ensureCapacity(endPosition);
     _buffer.setRange(offset, endPosition, data);
     if (endPosition > _length) {
@@ -35,6 +39,9 @@ class GrowingByteBuffer {
   }
 
   /// Truncates the buffer to a specific [newSize].
+  ///
+  /// No memory is freed when using [truncate].
+  ///
   /// If [newSize] is less than the current length, the buffer is truncated.
   /// If [newSize] is greater than the current length, the buffer length is extended with zeros.
   void truncate(int newSize) {
@@ -49,7 +56,7 @@ class GrowingByteBuffer {
     _length = newSize;
   }
 
-  /// Returns a [Uint8List] containing the data up to the current length.
+  /// Returns a [Uint8List] view containing the data up to the current length.
   Uint8List toUint8List() {
     return Uint8List.view(_buffer.buffer, 0, _length);
   }
@@ -63,7 +70,6 @@ class GrowingByteBuffer {
         newCapacity *= 2;
       }
       // Allocate a new buffer and copy existing data.
-      print('resizing to $newCapacity');
       Uint8List newBuffer = Uint8List(newCapacity);
       newBuffer.setRange(0, _length, _buffer);
       _buffer = newBuffer;

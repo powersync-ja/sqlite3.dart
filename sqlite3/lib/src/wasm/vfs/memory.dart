@@ -2,14 +2,14 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
-import 'growing_buffer.dart';
+import 'dynamic_buffer.dart';
 
 import '../../constants.dart';
 import '../../vfs.dart';
 import 'utils.dart';
 
 final class InMemoryFileSystem extends BaseVirtualFileSystem {
-  final Map<String, GrowingByteBuffer?> fileData = {};
+  final Map<String, DynamicBuffer?> fileData = {};
 
   InMemoryFileSystem({super.name = 'dart-memory', super.random});
 
@@ -35,7 +35,7 @@ final class InMemoryFileSystem extends BaseVirtualFileSystem {
       final create = flags & SqlFlag.SQLITE_OPEN_CREATE;
 
       if (create != 0) {
-        fileData[pathStr] = GrowingByteBuffer();
+        fileData[pathStr] = DynamicBuffer();
       } else {
         throw VfsException(SqlError.SQLITE_CANTOPEN);
       }
@@ -104,8 +104,8 @@ class _InMemoryFile extends BaseVfsFile {
     final file = vfs.fileData[path];
 
     if (file == null) {
-      vfs.fileData[path] = GrowingByteBuffer();
-      // TODO: grow?
+      vfs.fileData[path] = DynamicBuffer();
+      vfs.fileData[path]!.truncate(size);
     } else {
       file.truncate(size);
     }
@@ -121,7 +121,7 @@ class _InMemoryFile extends BaseVfsFile {
     var file = vfs.fileData[path];
 
     if (file == null) {
-      file = GrowingByteBuffer();
+      file = DynamicBuffer();
       vfs.fileData[path] = file;
     }
     file.write(buffer, fileOffset);
