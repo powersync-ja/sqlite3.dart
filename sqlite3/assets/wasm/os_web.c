@@ -16,4 +16,8 @@ int sqlite3_os_init(void) {
   return SQLITE_OK;
 }
 
+int getentropy(void* buf, size_t n) {
+    return xRandomness(-1, (int) n, (char*) buf);
+}
+
 int sqlite3_os_end(void) { return SQLITE_OK; }
