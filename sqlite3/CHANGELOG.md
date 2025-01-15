@@ -1,3 +1,13 @@
+## 2.6.0
+
+- Add `SimpleOpfsFileSystem.deleteFromStorage` to delete OPFS-based file
+  systems.
+- Add `jsonb`, a Dart `Codec` converting Dart object from and to SQLite
+  `JSONB` values.
+- __Experimentally__ support encryption on the web through SQLite Multiple
+  Ciphers. The readme provides more information on how to use encryption on the
+  web.
+
 ## 2.5.0
 
 - Allow registering custom virtual file systems on all platforms. Previously,

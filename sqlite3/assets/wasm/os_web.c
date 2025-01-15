@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "bridge.h"
 #include "sqlite3.h"
 
 extern int sqlite3_powersync_init(sqlite3 *db, char **pzErrMsg,
