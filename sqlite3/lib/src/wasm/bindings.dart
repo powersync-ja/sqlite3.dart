@@ -5,7 +5,6 @@ import 'dart:typed_data';
 import 'package:sqlite3/src/vfs.dart';
 
 import '../constants.dart';
-import '../exception.dart';
 import '../functions.dart';
 import '../implementation/bindings.dart';
 import 'wasm_interop.dart' as wasm;
@@ -56,8 +55,6 @@ final class WasmSqliteBindings extends RawSqliteBindings {
   @override
   SqliteResult<RawSqliteDatabase> sqlite3_open_v2(
       String name, int flags, String? zVfs) {
-    sqlite3_initialize();
-
     final namePtr = bindings.allocateZeroTerminated(name);
     final outDb = bindings.malloc(wasm.WasmBindings.pointerSize);
     final vfsPtr = zVfs == null ? 0 : bindings.allocateZeroTerminated(zVfs);

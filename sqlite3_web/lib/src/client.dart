@@ -391,18 +391,6 @@ final class DatabaseClient implements WebSqlite {
   }
 
   @override
-  Future<void> deleteDatabase(
-      {required String name, required StorageMode storage}) async {
-    switch (storage) {
-      case StorageMode.opfs:
-        await SimpleOpfsFileSystem.deleteFromStorage(pathForOpfs(name));
-      case StorageMode.indexedDb:
-        await IndexedDbFileSystem.deleteDatabase(name);
-      case StorageMode.inMemory:
-    }
-  }
-
-  @override
   Future<FeatureDetectionResult> runFeatureDetection(
       {String? databaseName}) async {
     await startWorkers();
