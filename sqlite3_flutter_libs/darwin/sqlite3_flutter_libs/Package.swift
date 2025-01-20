@@ -13,7 +13,7 @@ let package = Package(
         .library(name: "sqlite3-flutter-libs", type: .static, targets: ["sqlite3_flutter_libs"])
     ],
     dependencies: [
-        .package(url: "https://github.com/sbooth/CSQLite.git", exact: "3.47.2")
+        .package(url: "https://github.com/simolus3/CSQLite.git", revision: "7fa023c325a734f9dd1dcd30eeb65a620f745a2d")
     ],
     targets: [
         .target(

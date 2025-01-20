@@ -1,3 +1,14 @@
+## 2.7.0
+
+- Add support for commit and rollback hooks as well as a predicate that can
+  revert transactions. Thanks to [@jackd](https://github.com/jackd)!
+
+## 2.6.1
+
+- Fix out-of-bound reads in the `xWrite` implementation of the OPFS-locks based
+  file-system implementation when writing more than 64 KiB in one operation.
+- Support SQLite libraries compiled with `SQLITE_OMIT_AUTOINIT`.
+
 ## 2.6.0
 
 - Add `SimpleOpfsFileSystem.deleteFromStorage` to delete OPFS-based file

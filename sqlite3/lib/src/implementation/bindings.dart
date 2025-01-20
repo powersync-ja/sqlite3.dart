@@ -40,6 +40,8 @@ abstract base class RawSqliteBindings {
 
   void registerVirtualFileSystem(VirtualFileSystem vfs, int makeDefault);
   void unregisterVirtualFileSystem(VirtualFileSystem vfs);
+
+  int sqlite3_initialize();
 }
 
 /// Combines a sqlite result code and the result object.
@@ -57,6 +59,8 @@ typedef RawXFunc = void Function(RawSqliteContext, List<RawSqliteValue>);
 typedef RawXStep = void Function(RawSqliteContext, List<RawSqliteValue>);
 typedef RawXFinal = void Function(RawSqliteContext);
 typedef RawUpdateHook = void Function(int kind, String tableName, int rowId);
+typedef RawCommitHook = int Function();
+typedef RawRollbackHook = void Function();
 typedef RawCollation = int Function(String? a, String? b);
 
 abstract base class RawSqliteDatabase {
@@ -78,6 +82,10 @@ abstract base class RawSqliteDatabase {
   void deallocateAdditionalMemory();
 
   void sqlite3_update_hook(RawUpdateHook? hook);
+
+  void sqlite3_commit_hook(RawCommitHook? hook);
+
+  void sqlite3_rollback_hook(RawRollbackHook? hook);
 
   /// Returns a compiler able to create prepared statements from the utf8-
   /// encoded SQL string passed as its argument.

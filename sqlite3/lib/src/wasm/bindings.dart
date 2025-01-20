@@ -79,11 +79,9 @@ final class WasmSqliteBindings extends RawSqliteBindings {
     return bindings.memory.readString(bindings.sqlite3_sourceid());
   }
 
-  void sqlite3_initialize() {
-    final rc = bindings.sqlite3_initialize();
-    if (rc != 0) {
-      throw SqliteException(rc, 'sqlite3_initialize call failed');
-    }
+  @override
+  int sqlite3_initialize() {
+    return bindings.sqlite3_initialize();
   }
 
   @override
@@ -95,7 +93,6 @@ final class WasmSqliteBindings extends RawSqliteBindings {
     if (ptr == 0) {
       throw StateError('could not register vfs');
     }
-    sqlite3_initialize();
     DartCallbacks.sqliteVfsPointer[vfs] = ptr;
   }
 
@@ -260,6 +257,20 @@ final class WasmDatabase extends RawSqliteDatabase {
     bindings.callbacks.installedUpdateHook = hook;
 
     bindings.dart_sqlite3_updates(db, hook != null ? 1 : -1);
+  }
+
+  @override
+  void sqlite3_commit_hook(RawCommitHook? hook) {
+    bindings.callbacks.installedCommitHook = hook;
+
+    bindings.dart_sqlite3_commits(db, hook != null ? 1 : -1);
+  }
+
+  @override
+  void sqlite3_rollback_hook(RawRollbackHook? hook) {
+    bindings.callbacks.installedRollbackHook = hook;
+
+    bindings.dart_sqlite3_rollbacks(db, hook != null ? 1 : -1);
   }
 
   @override

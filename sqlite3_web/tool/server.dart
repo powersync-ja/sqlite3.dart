@@ -169,10 +169,14 @@ class TestWebDriver {
     await driver.executeAsync("close('', arguments[0])", []);
   }
 
-  Future<int> countUpdateEvents() async {
+  Future<({int updates, int commits, int rollbacks})> countEvents() async {
     final result =
         await driver.executeAsync('get_updates("", arguments[0])', []);
-    return result as int;
+    return (
+      updates: result[0] as int,
+      commits: result[1] as int,
+      rollbacks: result[2] as int,
+    );
   }
 
   Future<void> execute(String sql) async {
@@ -206,6 +210,14 @@ class TestWebDriver {
     final result = await driver.executeAsync('flush("", arguments[0])', []);
     if (result != true) {
       throw 'flush() failed: $result';
+    }
+  }
+
+  Future<void> checkReadWrite() async {
+    final result =
+        await driver.executeAsync('check_read_write("", arguments[0])', []);
+    if (result != null) {
+      throw 'check_read_write() failed: $result';
     }
   }
 

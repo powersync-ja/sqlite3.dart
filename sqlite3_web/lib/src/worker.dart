@@ -105,18 +105,51 @@ final class Shared extends WorkerEnvironment {
   }
 }
 
+/// A fake worker environment running in the same context as the main
+/// application.
+///
+/// This allows using a communication channel based on message ports regardless
+/// of where the database is hosted. While that adds overhead, a local
+/// environment is only used as a fallback if workers are unavailable.
+final class Local extends WorkerEnvironment {
+  final StreamController<Message> _messages = StreamController();
+
+  Local() : super._();
+
+  void addTopLevelMessage(Message message) {
+    _messages.add(message);
+  }
+
+  @override
+  Stream<Message> get topLevelRequests {
+    return _messages.stream;
+  }
+}
+
+class _StreamState {
+  StreamSubscription<void>? subscription;
+
+  void cancel() {
+    subscription?.cancel();
+    subscription = null;
+  }
+}
+
 /// A database opened by a client.
 final class _ConnectionDatabase {
   final DatabaseState database;
   final int id;
 
-  StreamSubscription<SqliteUpdate>? updates;
+  final _StreamState updates = _StreamState();
+  final _StreamState rollbacks = _StreamState();
+  final _StreamState commits = _StreamState();
 
   _ConnectionDatabase(this.database, [int? id]) : id = id ?? database.id;
 
   Future<void> close() async {
-    updates?.cancel();
-    updates = null;
+    updates.cancel();
+    rollbacks.cancel();
+    commits.cancel();
 
     await database.decrementRefCount();
   }
@@ -212,23 +245,34 @@ final class _ClientConnection extends ProtocolChannel
           return SimpleSuccessResponse(
               response: null, requestId: request.requestId);
         }
-      case UpdateStreamRequest(action: true):
-        if (database!.updates == null) {
+      case StreamRequest(action: true, type: MessageType.updateRequest):
+        return await subscribe(database!.updates, () async {
           final rawDatabase = await database.database.opened;
-          database.updates ??= rawDatabase.database.updates.listen((event) {
+          return rawDatabase.database.updates.listen((event) {
             sendNotification(UpdateNotification(
                 update: event, databaseId: database.database.id));
           });
-        }
-        return SimpleSuccessResponse(
-            response: null, requestId: request.requestId);
-      case UpdateStreamRequest(action: false):
-        if (database!.updates != null) {
-          database.updates?.cancel();
-          database.updates = null;
-        }
-        return SimpleSuccessResponse(
-            response: null, requestId: request.requestId);
+        }, request);
+      case StreamRequest(action: true, type: MessageType.commitRequest):
+        return await subscribe(database!.commits, () async {
+          final rawDatabase = await database.database.opened;
+          return rawDatabase.database.commits.listen((event) {
+            sendNotification(EmptyNotification(
+                type: MessageType.notifyCommit,
+                databaseId: database.database.id));
+          });
+        }, request);
+      case StreamRequest(action: true, type: MessageType.rollbackRequest):
+        return await subscribe(database!.rollbacks, () async {
+          final rawDatabase = await database.database.opened;
+          return rawDatabase.database.rollbacks.listen((event) {
+            sendNotification(EmptyNotification(
+                type: MessageType.notifyRollback,
+                databaseId: database.database.id));
+          });
+        }, request);
+      case StreamRequest(action: false):
+        return unsubscribe(database!, request);
       case OpenAdditonalConnection():
         final database = _databaseFor(request)!.database;
         database.refCount++;
@@ -282,8 +326,37 @@ final class _ClientConnection extends ProtocolChannel
         } finally {
           file.xClose();
         }
+      case StreamRequest(action: true):
+        // Suppported stream requests handled in cases above.
+        return ErrorResponse(
+            message: 'Invalid stream subscription request',
+            requestId: request.requestId);
     }
   }
+
+  Future<Response> subscribe(
+    _StreamState state,
+    Future<StreamSubscription<void>> Function() subscribeInternally,
+    StreamRequest request,
+  ) async {
+    state.subscription ??= await subscribeInternally();
+    return SimpleSuccessResponse(response: null, requestId: request.requestId);
+  }
+
+  Response unsubscribe(_ConnectionDatabase database, StreamRequest request) {
+    assert(!request.action);
+    final handler = switch (request.type) {
+      MessageType.updateRequest => database.updates,
+      MessageType.rollbackRequest => database.rollbacks,
+      MessageType.commitRequest => database.commits,
+      _ => throw AssertionError(),
+    };
+    handler.cancel();
+
+    return SimpleSuccessResponse(response: null, requestId: request.requestId);
+  }
+
+  void handleStreamCancelRequest() {}
 
   @override
   void handleNotification(Notification notification) {
@@ -429,7 +502,8 @@ final class WorkerRunner {
   /// a shared context that can use synchronous JS APIs.
   Worker? _innerWorker;
 
-  WorkerRunner(this._controller) : _environment = WorkerEnvironment();
+  WorkerRunner(this._controller, {WorkerEnvironment? environment})
+      : _environment = environment ?? WorkerEnvironment();
 
   void handleRequests() async {
     await for (final message in _environment.topLevelRequests) {
