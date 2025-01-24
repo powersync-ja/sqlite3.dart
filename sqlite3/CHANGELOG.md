@@ -1,3 +1,24 @@
+## 2.7.2
+
+- Web: Fix update events not being delivered in some shared worker setups.
+
+## 2.7.1
+
+- Web: Fix a crash when using version `2.7.0` of this package with an older
+  WebAssembly bundle.
+  Note: Version `2.7.0` has been retracted from pub.dev for this reason.
+
+## 2.7.0
+
+- Add support for commit and rollback hooks as well as a predicate that can
+  revert transactions. Thanks to [@jackd](https://github.com/jackd)!
+
+## 2.6.1
+
+- Fix out-of-bound reads in the `xWrite` implementation of the OPFS-locks based
+  file-system implementation when writing more than 64 KiB in one operation.
+- Support SQLite libraries compiled with `SQLITE_OMIT_AUTOINIT`.
+
 ## 2.6.0
 
 - Add `SimpleOpfsFileSystem.deleteFromStorage` to delete OPFS-based file

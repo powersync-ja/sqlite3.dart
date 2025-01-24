@@ -14,19 +14,27 @@ import 'protocol.dart';
 import 'shared.dart';
 import 'worker.dart';
 
+final class _CommitOrRollbackStream {
+  StreamSubscription<Notification>? workerSubscription;
+  final StreamController<void> controller = StreamController.broadcast();
+}
+
 final class RemoteDatabase implements Database {
   final WorkerConnection connection;
   final int databaseId;
 
   var _isClosed = false;
 
-  StreamSubscription<Notification>? _notificationSubscription;
+  StreamSubscription<Notification>? _updateNotificationSubscription;
   final StreamController<SqliteUpdate> _updates = StreamController.broadcast();
+
+  final _CommitOrRollbackStream _commits = _CommitOrRollbackStream();
+  final _CommitOrRollbackStream _rollbacks = _CommitOrRollbackStream();
 
   RemoteDatabase({required this.connection, required this.databaseId}) {
     _updates
       ..onListen = (() {
-        _notificationSubscription ??=
+        _updateNotificationSubscription ??=
             connection.notifications.stream.listen((notification) {
           if (notification case UpdateNotification()) {
             if (notification.databaseId == databaseId) {
@@ -34,22 +42,54 @@ final class RemoteDatabase implements Database {
             }
           }
         });
-
-        _requestUpdates(true);
+        _requestStreamUpdates(MessageType.updateRequest, true);
       })
       ..onCancel = (() {
-        _notificationSubscription?.cancel();
-        _notificationSubscription = null;
+        _updateNotificationSubscription?.cancel();
+        _updateNotificationSubscription = null;
+        _requestStreamUpdates(MessageType.updateRequest, false);
+      });
 
-        _requestUpdates(false);
+    _setupCommitOrRollbackStream(
+        _commits, MessageType.commitRequest, MessageType.notifyCommit);
+    _setupCommitOrRollbackStream(
+        _rollbacks, MessageType.rollbackRequest, MessageType.notifyRollback);
+  }
+
+  void _setupCommitOrRollbackStream(
+    _CommitOrRollbackStream stream,
+    MessageType requestSubscription,
+    MessageType notificationType,
+  ) {
+    stream.controller
+      ..onListen = (() {
+        stream.workerSubscription ??=
+            connection.notifications.stream.listen((notification) {
+          if (notification case EmptyNotification(type: final type)) {
+            if (notification.databaseId == databaseId &&
+                type == notificationType) {
+              stream.controller.add(null);
+            }
+          }
+        });
+        _requestStreamUpdates(requestSubscription, true);
+      })
+      ..onCancel = (() {
+        stream.workerSubscription?.cancel();
+        stream.workerSubscription = null;
+        _requestStreamUpdates(requestSubscription, false);
       });
   }
 
-  void _requestUpdates(bool sendUpdates) {
+  void _requestStreamUpdates(MessageType streamType, bool subscribe) {
     if (!_isClosed) {
       connection.sendRequest(
-        UpdateStreamRequest(
-            action: sendUpdates, requestId: 0, databaseId: databaseId),
+        StreamRequest(
+          type: streamType,
+          action: subscribe,
+          requestId: 0, // filled out in sendRequest
+          databaseId: databaseId,
+        ),
         MessageType.simpleSuccessResponse,
       );
     }
@@ -63,10 +103,14 @@ final class RemoteDatabase implements Database {
   @override
   Future<void> dispose() async {
     _isClosed = true;
-    _updates.close();
-    await connection.sendRequest(
-        CloseDatabase(requestId: 0, databaseId: databaseId),
-        MessageType.simpleSuccessResponse);
+    await (
+      _updates.close(),
+      _rollbacks.controller.close(),
+      _commits.controller.close(),
+      connection.sendRequest(
+          CloseDatabase(requestId: 0, databaseId: databaseId),
+          MessageType.simpleSuccessResponse)
+    ).wait;
   }
 
   @override
@@ -126,6 +170,12 @@ final class RemoteDatabase implements Database {
 
   @override
   Stream<SqliteUpdate> get updates => _updates.stream;
+
+  @override
+  Stream<void> get rollbacks => _rollbacks.controller.stream;
+
+  @override
+  Stream<void> get commits => _commits.controller.stream;
 
   @override
   Future<int> get userVersion async {
@@ -227,15 +277,19 @@ final class WorkerConnection extends ProtocolChannel {
 final class DatabaseClient implements WebSqlite {
   final Uri workerUri;
   final Uri wasmUri;
+  final DatabaseController _localController;
 
   final Lock _startWorkersLock = Lock();
   bool _startedWorkers = false;
   WorkerConnection? _connectionToDedicated;
   WorkerConnection? _connectionToShared;
   WorkerConnection? _connectionToDedicatedInShared;
+
+  WorkerConnection? _connectionToLocal;
+
   final Set<MissingBrowserFeature> _missingFeatures = {};
 
-  DatabaseClient(this.workerUri, this.wasmUri);
+  DatabaseClient(this.workerUri, this.wasmUri, this._localController);
 
   Future<void> startWorkers() {
     return _startWorkersLock.synchronized(() async {
@@ -244,36 +298,53 @@ final class DatabaseClient implements WebSqlite {
       }
       _startedWorkers = true;
 
-      if (globalContext.has('Worker')) {
-        final dedicated = Worker(
+      await _startDedicated();
+      await _startShared();
+    });
+  }
+
+  Future<void> _startDedicated() async {
+    if (globalContext.has('Worker')) {
+      final Worker dedicated;
+      try {
+        dedicated = Worker(
           workerUri.toString().toJS,
           WorkerOptions(name: 'sqlite3_worker'),
         );
-
-        final (endpoint, channel) = await createChannel();
-        ConnectRequest(endpoint: endpoint, requestId: 0)
-            .sendToWorker(dedicated);
-
-        _connectionToDedicated =
-            WorkerConnection(channel.injectErrorsFrom(dedicated));
-      } else {
+      } on Object {
         _missingFeatures.add(MissingBrowserFeature.dedicatedWorkers);
+        return;
       }
 
-      if (globalContext.has('SharedWorker')) {
-        final shared = SharedWorker(workerUri.toString().toJS);
-        shared.port.start();
+      final (endpoint, channel) = await createChannel();
+      ConnectRequest(endpoint: endpoint, requestId: 0).sendToWorker(dedicated);
 
-        final (endpoint, channel) = await createChannel();
-        ConnectRequest(endpoint: endpoint, requestId: 0)
-            .sendToPort(shared.port);
+      _connectionToDedicated =
+          WorkerConnection(channel.injectErrorsFrom(dedicated));
+    } else {
+      _missingFeatures.add(MissingBrowserFeature.dedicatedWorkers);
+    }
+  }
 
-        _connectionToShared =
-            WorkerConnection(channel.injectErrorsFrom(shared));
-      } else {
+  Future<void> _startShared() async {
+    if (globalContext.has('SharedWorker')) {
+      final SharedWorker shared;
+      try {
+        shared = SharedWorker(workerUri.toString().toJS);
+      } on Object {
         _missingFeatures.add(MissingBrowserFeature.sharedWorkers);
+        return;
       }
-    });
+
+      shared.port.start();
+
+      final (endpoint, channel) = await createChannel();
+      ConnectRequest(endpoint: endpoint, requestId: 0).sendToPort(shared.port);
+
+      _connectionToShared = WorkerConnection(channel.injectErrorsFrom(shared));
+    } else {
+      _missingFeatures.add(MissingBrowserFeature.sharedWorkers);
+    }
   }
 
   Future<WorkerConnection> _connectToDedicatedInShared() {
@@ -288,6 +359,22 @@ final class DatabaseClient implements WebSqlite {
           MessageType.simpleSuccessResponse);
 
       return _connectionToDedicatedInShared = WorkerConnection(channel);
+    });
+  }
+
+  Future<WorkerConnection> _connectToLocal() async {
+    return _startWorkersLock.synchronized(() async {
+      if (_connectionToLocal case final conn?) {
+        return conn;
+      }
+
+      final local = Local();
+      final (endpoint, channel) = await createChannel();
+      WorkerRunner(_localController, environment: local).handleRequests();
+      local
+          .addTopLevelMessage(ConnectRequest(requestId: 0, endpoint: endpoint));
+
+      return _connectionToLocal = WorkerConnection(channel);
     });
   }
 
@@ -310,16 +397,24 @@ final class DatabaseClient implements WebSqlite {
 
     final existing = <ExistingDatabase>{};
     final available = <(StorageMode, AccessMode)>[];
+    var workersReportedIndexedDbSupport = false;
 
-    if (_connectionToDedicated case final connection?) {
-      final response = await connection.sendRequest(
-        CompatibilityCheck(
-          requestId: 0,
-          type: MessageType.dedicatedCompatibilityCheck,
-          databaseName: databaseName,
-        ),
-        MessageType.simpleSuccessResponse,
-      );
+    Future<void> dedicatedCompatibilityCheck(
+        WorkerConnection connection) async {
+      SimpleSuccessResponse response;
+      try {
+        response = await connection.sendRequest(
+          CompatibilityCheck(
+            requestId: 0,
+            type: MessageType.dedicatedCompatibilityCheck,
+            databaseName: databaseName,
+          ),
+          MessageType.simpleSuccessResponse,
+        );
+      } on Object {
+        return;
+      }
+
       final result = CompatibilityResult.fromJS(response.response as JSObject);
       existing.addAll(result.existingDatabases);
       available.add((StorageMode.inMemory, AccessMode.throughDedicatedWorker));
@@ -327,6 +422,8 @@ final class DatabaseClient implements WebSqlite {
       if (result.canUseIndexedDb) {
         available
             .add((StorageMode.indexedDb, AccessMode.throughDedicatedWorker));
+
+        workersReportedIndexedDbSupport = true;
       } else {
         _missingFeatures.add(MissingBrowserFeature.indexedDb);
       }
@@ -351,18 +448,25 @@ final class DatabaseClient implements WebSqlite {
       }
     }
 
-    if (_connectionToShared case final connection?) {
-      final response = await connection.sendRequest(
-        CompatibilityCheck(
-          requestId: 0,
-          type: MessageType.sharedCompatibilityCheck,
-          databaseName: databaseName,
-        ),
-        MessageType.simpleSuccessResponse,
-      );
+    Future<void> sharedCompatibilityCheck(WorkerConnection connection) async {
+      SimpleSuccessResponse response;
+      try {
+        response = await connection.sendRequest(
+          CompatibilityCheck(
+            requestId: 0,
+            type: MessageType.sharedCompatibilityCheck,
+            databaseName: databaseName,
+          ),
+          MessageType.simpleSuccessResponse,
+        );
+      } on Object {
+        return;
+      }
+
       final result = CompatibilityResult.fromJS(response.response as JSObject);
 
       if (result.canUseIndexedDb) {
+        workersReportedIndexedDbSupport = true;
         available.add((StorageMode.indexedDb, AccessMode.throughSharedWorker));
       } else {
         _missingFeatures.add(MissingBrowserFeature.indexedDb);
@@ -381,6 +485,19 @@ final class DatabaseClient implements WebSqlite {
         _missingFeatures
             .add(MissingBrowserFeature.dedicatedWorkersInSharedWorkers);
       }
+    }
+
+    if (_connectionToDedicated case final dedicated?) {
+      await dedicatedCompatibilityCheck(dedicated);
+    }
+    if (_connectionToShared case final shared?) {
+      await sharedCompatibilityCheck(shared);
+    }
+
+    available.add((StorageMode.inMemory, AccessMode.inCurrentContext));
+    if (workersReportedIndexedDbSupport || await checkIndexedDbSupport()) {
+      // If the workers can use IndexedDb, so can we.
+      available.add((StorageMode.indexedDb, AccessMode.inCurrentContext));
     }
 
     return FeatureDetectionResult(
@@ -425,7 +542,8 @@ final class DatabaseClient implements WebSqlite {
         connection = _connectionToDedicated!;
         shared = false;
       case AccessMode.inCurrentContext:
-        throw UnimplementedError('todo: Open database locally');
+        connection = await _connectToLocal();
+        shared = false;
     }
 
     final response = await connection.sendRequest(

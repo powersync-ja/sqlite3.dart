@@ -35,3 +35,11 @@ jobs:
           file: sqlite3/.dart_tool/sqlite3_build/sqlite3_debug.init.wasm
           asset_name: sqlite3.debug.wasm
           tag: ${{ github.ref_name }}
+      - name: Upload sqlite3 multipleciphers binary
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          overwrite: true
+          file: sqlite3/.dart_tool/sqlite3_build/sqlite3mc.wasm
+          asset_name: sqlite3mc.wasm
+          tag: ${{ github.ref_name }}

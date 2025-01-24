@@ -12,13 +12,13 @@ include(FetchContent)
 FetchContent_Declare(
     sqlite3
     # NOTE: When changing this, also update `test/wasm/sqlite3_test.dart`
-    URL https://sqlite.org/2024/sqlite-autoconf-3470200.tar.gz
+    URL https://sqlite.org/2025/sqlite-autoconf-3480000.tar.gz
     DOWNLOAD_EXTRACT_TIMESTAMP NEW
 )
 
 FetchContent_Declare(
     sqlite3mc
-    URL https://github.com/utelle/SQLite3MultipleCiphers/releases/download/v1.9.2/sqlite3mc-1.9.2-sqlite-3.47.2-amalgamation.zip
+    URL https://github.com/utelle/SQLite3MultipleCiphers/releases/download/v2.0.2/sqlite3mc-2.0.2-sqlite-3.48.0-amalgamation.zip
     DOWNLOAD_EXTRACT_TIMESTAMP NEW
 )
 
@@ -27,7 +27,7 @@ FetchContent_MakeAvailable(sqlite3mc)
 
 file(DOWNLOAD https://raw.githubusercontent.com/sqlite/sqlite/master/src/test_vfstrace.c "${CMAKE_BINARY_DIR}/vfstrace.c")
 
-set(POWERSYNC_VERSION "0.3.8")
+set(POWERSYNC_VERSION "0.3.9")
 set(POWERSYNC_A "${CMAKE_BINARY_DIR}/libpowersync-wasm.a")
 file(DOWNLOAD "https://github.com/powersync-ja/powersync-sqlite-core/releases/download/v${POWERSYNC_VERSION}/libpowersync-wasm.a" "${POWERSYNC_A}")
 
@@ -36,7 +36,7 @@ add_custom_command(
     OUTPUT required_symbols.txt
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../
     COMMAND dart run tool/wasm_symbols.dart ${CMAKE_CURRENT_BINARY_DIR}/required_symbols.txt
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../../tool/wasm_symbols.dart
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../../tool/wasm_symbols.dart ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/src/wasm/wasm_interop.dart
     VERBATIM
 )
 add_custom_target(required_symbols DEPENDS required_symbols.txt)
@@ -55,7 +55,18 @@ macro(base_sqlite3_target name debug crypto)
   if(${crypto})
     list(APPEND sources "${sqlite3mc_SOURCE_DIR}/sqlite3mc_amalgamation.c")
     list(APPEND sources "${CMAKE_CURRENT_SOURCE_DIR}/getentropy.c")
-    list(APPEND flags "-DSQLITE_OMIT_AUTOINIT")
+    # We only want to support the chacha20 cipher, some of the others are tricky to
+    # compile to webassembly.
+    list(APPEND flags
+      "-DSQLITE_OMIT_AUTOINIT"
+      "-DHAVE_CIPHER_AES_128_CBC=0"
+      "-DHAVE_CIPHER_AES_256_CBC=0"
+      "-DHAVE_CIPHER_SQLCIPHER=0"
+      "-DHAVE_CIPHER_RC4=0"
+      "-DHAVE_CIPHER_ASCON128=0"
+      "-DHAVE_CIPHER_AEGIS=0"
+      "-DHAVE_CIPHER_CHACHA20=1"
+    )
   else()
     list(APPEND sources "${sqlite3_SOURCE_DIR}/sqlite3.c")
   endif()

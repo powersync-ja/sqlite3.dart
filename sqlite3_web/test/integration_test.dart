@@ -45,8 +45,13 @@ enum Browser {
     final available = <(StorageMode, AccessMode)>{};
     for (final storage in StorageMode.values) {
       for (final access in AccessMode.values) {
-        if (access != AccessMode.inCurrentContext &&
-            !unsupportedImplementations.contains((storage, access))) {
+        if (access == AccessMode.inCurrentContext &&
+            storage == StorageMode.opfs) {
+          // OPFS access is only available in workers.
+          continue;
+        }
+
+        if (!unsupportedImplementations.contains((storage, access))) {
           available.add((storage, access));
         }
       }
@@ -103,21 +108,36 @@ void main() {
       });
 
       setUp(() async {
-        final rawDriver = await createDriver(
-          spec: browser.isChromium ? WebDriverSpec.JsonWire : WebDriverSpec.W3c,
-          uri: browser.driverUri,
-          desired: {
-            'goog:chromeOptions': {
-              'args': [
-                '--headless=new',
-                '--disable-search-engine-choice-screen',
-              ],
-            },
-            'moz:firefoxOptions': {
-              'args': ['-headless']
-            },
-          },
-        );
+        late WebDriver rawDriver;
+        for (var i = 0; i < 3; i++) {
+          try {
+            rawDriver = await createDriver(
+              spec: browser.isChromium
+                  ? WebDriverSpec.JsonWire
+                  : WebDriverSpec.W3c,
+              uri: browser.driverUri,
+              desired: {
+                'goog:chromeOptions': {
+                  'args': [
+                    '--headless=new',
+                    '--disable-search-engine-choice-screen',
+                  ],
+                },
+                'moz:firefoxOptions': {
+                  'args': ['-headless']
+                },
+              },
+            );
+            break;
+          } on SocketException {
+            // webdriver server taking a bit longer to start up...
+            if (i == 2) {
+              rethrow;
+            }
+
+            await Future.delayed(const Duration(milliseconds: 500));
+          }
+        }
 
         // logs.get() isn't supported on Firefox
         if (browser != Browser.firefox) {
@@ -154,12 +174,22 @@ void main() {
           await driver.assertFile(false);
 
           await driver.execute('CREATE TABLE foo (bar TEXT);');
-          expect(await driver.countUpdateEvents(), 0);
+          var events = await driver.countEvents();
+          expect(events.updates, 0);
+          expect(events.commits, 0);
+          expect(events.rollbacks, 0);
           await driver.execute("INSERT INTO foo (bar) VALUES ('hello');");
-          expect(await driver.countUpdateEvents(), 1);
+          events = await driver.countEvents();
+          expect(events.updates, 1);
+          expect(events.commits, 1);
 
           expect(await driver.assertFile(true), isPositive);
           await driver.flush();
+
+          await driver.execute('begin');
+          await driver.execute('rollback');
+          events = await driver.countEvents();
+          expect(events.rollbacks, 1);
 
           if (storage != StorageMode.inMemory) {
             await driver.driver.refresh();
@@ -180,6 +210,16 @@ void main() {
             );
             await driver.assertFile(false);
           }
+        });
+
+        test('check large write and read', () async {
+          await driver.openDatabase(
+            implementation: (storage, access),
+            onlyOpenVfs: true,
+          );
+          await driver.assertFile(false);
+
+          await driver.checkReadWrite();
         });
       }
     });
