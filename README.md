@@ -1,3 +1,5 @@
+**NOTEL** This repo is not used or maintained and should not be used. We're keeping it up to preserve the commit history.
+
 # sqlite3.dart
 
 This project contains Dart packages to use SQLite from Dart via `dart:ffi`.
